@@ -13,7 +13,7 @@ const defaultGroups = ['builtin', 'external', 'parent', 'sibling', 'index'];
 
 function reverse(array) {
   return array.map(function (v) {
-    return Object.assign({}, v, { rank: -v.rank });
+    return Object.assign({}, v, { rank: -v.rank, newlineRank: -v.newlineRank });
   }).reverse();
 }
 
@@ -276,7 +276,6 @@ function getSorter(ascending) {
         result = a < b ? -1 : 1;
       }
     }
-    
     return result * multiplier;
   };
 }
@@ -320,16 +319,16 @@ function mutateRanksToAlphabetize(imported, alphabetizeOptions) {
 
 // DETECTING
 
-function computePathRank(ranks, pathGroups, path, maxPosition) {
+function computePathRank(ranks, pathGroups, path, maxPosition, isNewlineRelevant) {
   for (let i = 0, l = pathGroups.length; i < l; i++) {
-    const { pattern, patternOptions, group, position = 1 } = pathGroups[i];
+    const { pattern, patternOptions, group, newlineSeparate, position = 1 } = pathGroups[i];
     if (minimatch(path, pattern, patternOptions || { nocomment: true })) {
-      return ranks[group] + (position / maxPosition);
+      return isNewlineRelevant && !newlineSeparate ? ranks[group] : ranks[group] + (position / maxPosition);
     }
   }
 }
 
-function computeRank(context, ranks, importEntry, excludedImportTypes) {
+function computeRank(context, ranks, importEntry, excludedImportTypes, isNewlineRelevant) {
   let impType;
   let rank;
   if (importEntry.type === 'import:object') {
@@ -340,7 +339,7 @@ function computeRank(context, ranks, importEntry, excludedImportTypes) {
     impType = importType(importEntry.value, context);
   }
   if (!excludedImportTypes.has(impType)) {
-    rank = computePathRank(ranks.groups, ranks.pathGroups, importEntry.value, ranks.maxPosition);
+    rank = computePathRank(ranks.groups, ranks.pathGroups, importEntry.value, ranks.maxPosition, isNewlineRelevant);
   }
   if (typeof rank === 'undefined') {
     rank = ranks.groups[impType];
@@ -348,14 +347,14 @@ function computeRank(context, ranks, importEntry, excludedImportTypes) {
   if (importEntry.type !== 'import' && !importEntry.type.startsWith('import:')) {
     rank += 100;
   }
-
   return rank;
 }
 
 function registerNode(context, importEntry, ranks, imported, excludedImportTypes) {
-  const rank = computeRank(context, ranks, importEntry, excludedImportTypes);
+  const newlineRank = computeRank(context, ranks, importEntry, excludedImportTypes, true);
+  const rank = computeRank(context, ranks, importEntry, excludedImportTypes, false);
   if (rank !== -1) {
-    imported.push(Object.assign({}, importEntry, { rank }));
+    imported.push(Object.assign({}, importEntry, { rank, newlineRank }));
   }
 }
 
@@ -498,13 +497,13 @@ function makeNewlinesBetweenReport(context, imported, newlinesBetweenImports) {
 
     if (newlinesBetweenImports === 'always'
         || newlinesBetweenImports === 'always-and-inside-groups') {
-      if (currentImport.rank !== previousImport.rank && emptyLinesBetween === 0) {
+      if (currentImport.newlineRank !== previousImport.newlineRank && emptyLinesBetween === 0) {
         context.report({
           node: previousImport.node,
           message: 'There should be at least one empty line between import groups',
           fix: fixNewLineAfterImport(context, previousImport),
         });
-      } else if (currentImport.rank === previousImport.rank
+      } else if (currentImport.newlineRank === previousImport.newlineRank
         && emptyLinesBetween > 0
         && newlinesBetweenImports !== 'always-and-inside-groups') {
         context.report({
@@ -570,6 +569,7 @@ module.exports = {
                   type: 'string',
                   enum: ['after', 'before'],
                 },
+                newlineSeparate: {type: 'boolean', default: true}
               },
               required: ['pattern', 'group'],
             },
